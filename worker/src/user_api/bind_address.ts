@@ -125,7 +125,7 @@ const UserBindAddressModule = {
         // select binded address
         const { results } = await c.env.DB.prepare(
             `SELECT a.*,`
-            + ` (SELECT COUNT(*) FROM raw_mails WHERE address = a.name) AS mail_count,`
+            + ` (SELECT COUNT(*) FROM raw_mails WHERE address = a.name and shard_index = 0) AS mail_count,`
             + ` (SELECT COUNT(*) FROM sendbox WHERE address = a.name) AS send_count`
             + ` FROM address a `
             + ` JOIN users_address ua `

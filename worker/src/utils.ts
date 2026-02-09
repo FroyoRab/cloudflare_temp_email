@@ -3,6 +3,55 @@ import { createMimeMessage } from "mimetext";
 import { UserSettings, RoleAddressConfig } from "./models";
 import { CONSTANTS } from "./constants";
 
+const RAW_MAIL_SHARD_MAX_BYTES = 900000;
+
+export const splitRawEmailIntoShards = (
+    rawEmail: string,
+    maxBytes: number = RAW_MAIL_SHARD_MAX_BYTES
+): string[] => {
+    if (!rawEmail) {
+        return [""];
+    }
+    const encoder = new TextEncoder();
+    const rawBytes = encoder.encode(rawEmail);
+    if (rawBytes.length <= maxBytes) {
+        return [rawEmail];
+    }
+    const decoder = new TextDecoder();
+    const chunks: string[] = [];
+    for (let offset = 0; offset < rawBytes.length; offset += maxBytes) {
+        const chunkBytes = rawBytes.slice(offset, offset + maxBytes);
+        const isLastChunk = offset + maxBytes >= rawBytes.length;
+        const chunkText = decoder.decode(chunkBytes, { stream: !isLastChunk });
+        chunks.push(chunkText);
+    }
+    return chunks;
+};
+
+export const saveRawMailShards = async (
+    db: D1Database,
+    data: {
+        source: string;
+        address: string;
+        rawEmail: string;
+        messageId: string;
+    }
+): Promise<boolean> => {
+    const shards = splitRawEmailIntoShards(data.rawEmail);
+    const statements = shards.map((raw, shardIndex) => db.prepare(
+        `INSERT INTO raw_mails (source, address, raw, message_id, shard_index)`
+        + ` VALUES (?, ?, ?, ?, ?)`
+    ).bind(
+        data.source,
+        data.address,
+        raw,
+        data.messageId,
+        shardIndex
+    ));
+    const results = await db.batch(statements);
+    return results.every((result) => result.success);
+};
+
 export const getJsonObjectValue = <T = any>(
     value: string | any
 ): T | null => {
@@ -250,11 +299,12 @@ export const sendAdminInternalMail = async (
             data: text
         });
         const message_id = Math.random().toString(36).substring(2, 15);
-        const { success } = await c.env.DB.prepare(
-            `INSERT INTO raw_mails (source, address, raw, message_id) VALUES (?, ?, ?, ?)`
-        ).bind(
-            "admin@internal", toMail, msg.asRaw(), message_id
-        ).run();
+        const success = await saveRawMailShards(c.env.DB, {
+            source: "admin@internal",
+            address: toMail,
+            rawEmail: msg.asRaw(),
+            messageId: message_id
+        });
         if (!success) {
             console.log(`Failed save message from admin@internal to ${toMail}`);
         }

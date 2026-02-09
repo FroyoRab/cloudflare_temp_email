@@ -10,25 +10,38 @@ export default {
         const finalQuery = filterQuerys.length > 0 ? `where ${filterQuerys}` : "";
         const filterParams = [...addressParams]
         return await handleListQuery(c,
-            `SELECT * FROM raw_mails ${finalQuery}`,
-            `SELECT count(*) as count FROM raw_mails ${finalQuery}`,
+            `SELECT * FROM raw_mails ${finalQuery}`
+            + `${finalQuery ? " and" : " where"} shard_index = 0`,
+            `SELECT count(*) as count FROM raw_mails ${finalQuery}`
+            + `${finalQuery ? " and" : " where"} shard_index = 0`,
             filterParams, limit, offset
         );
     },
     getUnknowMails: async (c: Context<HonoCustomType>) => {
         const { limit, offset } = c.req.query();
         return await handleListQuery(c,
-            `SELECT * FROM raw_mails where address NOT IN (select name from address) `,
+            `SELECT * FROM raw_mails where address NOT IN (select name from address)`
+            + ` and shard_index = 0`,
             `SELECT count(*) as count FROM raw_mails`
-            + ` where address NOT IN (select name from address) `,
+            + ` where address NOT IN (select name from address)`
+            + ` and shard_index = 0`,
             [], limit, offset
         );
     },
     deleteMail: async (c: Context<HonoCustomType>) => {
         const { id } = c.req.param();
+        const mailRecord = await c.env.DB.prepare(
+            `SELECT address, message_id FROM raw_mails WHERE id = ?`
+        ).bind(id).first<{ address: string | null, message_id: string | null }>();
         const { success } = await c.env.DB.prepare(
-            `DELETE FROM raw_mails WHERE id = ? `
-        ).bind(id).run();
+            mailRecord?.message_id
+                ? `DELETE FROM raw_mails WHERE address = ? and message_id = ?`
+                : `DELETE FROM raw_mails WHERE id = ? `
+        ).bind(
+            ...(mailRecord?.message_id && mailRecord?.address
+                ? [mailRecord.address, mailRecord.message_id]
+                : [id])
+        ).run();
         return c.json({
             success: success
         })

@@ -20,8 +20,10 @@ export default {
         const finalQuery = filterQuerys.length > 0 ? `where ${filterQuerys}` : "";
         const filterParams = [...addressParams]
         return await handleListQuery(c,
-            `SELECT * FROM raw_mails ${finalQuery}`,
-            `SELECT count(*) as count FROM raw_mails ${finalQuery}`,
+            `SELECT * FROM raw_mails ${finalQuery}`
+            + ` and shard_index = 0`,
+            `SELECT count(*) as count FROM raw_mails ${finalQuery}`
+            + ` and shard_index = 0`,
             filterParams, limit, offset
         );
     },
@@ -29,10 +31,20 @@ export default {
         const { id } = c.req.param();
         const { user_id } = c.get("userPayload");
         const bindedAddressList = await UserBindAddressModule.getBindedAddressListById(c, user_id);
-        const { success } = await c.env.DB.prepare(
-            `DELETE FROM raw_mails WHERE id = ?`
+        const mailRecord = await c.env.DB.prepare(
+            `SELECT address, message_id FROM raw_mails WHERE id = ?`
             + ` and address IN (${bindedAddressList.map(() => "?").join(",")})`
-        ).bind(id, ...bindedAddressList).run();
+        ).bind(id, ...bindedAddressList).first<{ address: string | null, message_id: string | null }>();
+        const { success } = await c.env.DB.prepare(
+            mailRecord?.message_id
+                ? `DELETE FROM raw_mails WHERE address = ? and message_id = ?`
+                : `DELETE FROM raw_mails WHERE id = ?`
+                + ` and address IN (${bindedAddressList.map(() => "?").join(",")})`
+        ).bind(
+            ...(mailRecord?.message_id && mailRecord?.address
+                ? [mailRecord.address, mailRecord.message_id]
+                : [id, ...bindedAddressList])
+        ).run();
         return c.json({
             success: success
         })

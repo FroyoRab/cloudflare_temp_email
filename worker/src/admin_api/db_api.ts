@@ -10,12 +10,15 @@ CREATE TABLE IF NOT EXISTS raw_mails (
     address TEXT,
     raw TEXT,
     metadata TEXT,
+    shard_index INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_raw_mails_address ON raw_mails(address);
 
 CREATE INDEX IF NOT EXISTS idx_raw_mails_created_at ON raw_mails(created_at);
+
+CREATE INDEX IF NOT EXISTS idx_raw_mails_address_message_id_shard ON raw_mails(address, message_id, shard_index);
 
 CREATE TABLE IF NOT EXISTS address (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -176,6 +179,19 @@ export default {
             if (!hasSourceMeta) {
                 await c.env.DB.exec(`ALTER TABLE address ADD COLUMN source_meta TEXT;`);
                 await c.env.DB.exec(`CREATE INDEX IF NOT EXISTS idx_address_source_meta ON address(source_meta);`);
+            }
+        }
+        if (version && version <= "v0.0.5") {
+            // migration to v0.0.6: add shard_index column
+            const tableInfo = await c.env.DB.prepare(
+                `PRAGMA table_info(raw_mails)`
+            ).all();
+            const hasShardIndex = tableInfo.results?.some(
+                (col: any) => col.name === 'shard_index'
+            );
+            if (!hasShardIndex) {
+                await c.env.DB.exec(`ALTER TABLE raw_mails ADD COLUMN shard_index INTEGER DEFAULT 0;`);
+                await c.env.DB.exec(`CREATE INDEX IF NOT EXISTS idx_raw_mails_address_message_id_shard ON raw_mails(address, message_id, shard_index);`);
             }
         }
         if (version != CONSTANTS.DB_VERSION) {

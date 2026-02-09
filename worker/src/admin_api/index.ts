@@ -25,7 +25,7 @@ api.get('/admin/address', async (c) => {
     if (query) {
         return await handleListQuery(c,
             `SELECT a.*,`
-            + ` (SELECT COUNT(*) FROM raw_mails WHERE address = a.name) AS mail_count,`
+            + ` (SELECT COUNT(*) FROM raw_mails WHERE address = a.name and shard_index = 0) AS mail_count,`
             + ` (SELECT COUNT(*) FROM sendbox WHERE address = a.name) AS send_count`
             + ` FROM address a`
             + ` where name like ?`,
@@ -35,7 +35,7 @@ api.get('/admin/address', async (c) => {
     }
     return await handleListQuery(c,
         `SELECT a.*,`
-        + ` (SELECT COUNT(*) FROM raw_mails WHERE address = a.name) AS mail_count,`
+        + ` (SELECT COUNT(*) FROM raw_mails WHERE address = a.name and shard_index = 0) AS mail_count,`
         + ` (SELECT COUNT(*) FROM sendbox WHERE address = a.name) AS send_count`
         + ` FROM address a`,
         `SELECT count(*) as count FROM address`,
@@ -245,7 +245,7 @@ api.delete('/admin/sendbox/:id', async (c) => {
 
 api.get('/admin/statistics', async (c) => {
     const { count: mailCount } = await c.env.DB.prepare(
-        `SELECT count(*) as count FROM raw_mails`
+        `SELECT count(*) as count FROM raw_mails where shard_index = 0`
     ).first<{ count: number }>() || {};
     const { count: addressCount } = await c.env.DB.prepare(
         `SELECT count(*) as count FROM address`
