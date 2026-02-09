@@ -450,6 +450,49 @@ export const handleListQuery = async (
     return c.json({ results, count });
 }
 
+export const getMergedRawMail = async (
+    c: Context<HonoCustomType>,
+    address: string,
+    messageId: string | null | undefined,
+    fallbackRaw: string | null | undefined
+): Promise<string | null> => {
+    if (!messageId) {
+        return fallbackRaw ?? null;
+    }
+    const { results } = await c.env.DB.prepare(
+        `SELECT raw FROM raw_mails`
+        + ` WHERE address = ? AND message_id = ?`
+        + ` ORDER BY shard_index ASC, id ASC`
+    ).bind(address, messageId).all<{ raw: string }>();
+    if (!results || results.length === 0) {
+        return fallbackRaw ?? null;
+    }
+    return results.map((row) => row.raw || "").join("");
+};
+
+export const getMailWithMergedRawById = async (
+    c: Context<HonoCustomType>,
+    mailId: string,
+    address?: string
+): Promise<Record<string, any> | null> => {
+    const base = await c.env.DB.prepare(
+        `SELECT * FROM raw_mails WHERE id = ?`
+        + (address ? ` AND address = ?` : "")
+    ).bind(
+        mailId,
+        ...(address ? [address] : [])
+    ).first<Record<string, any>>();
+    if (!base) {
+        return null;
+    }
+    base.raw = await getMergedRawMail(
+        c,
+        base.address as string,
+        base.message_id as string | null | undefined,
+        base.raw as string | null | undefined
+    );
+    return base;
+};
 
 export const commonParseMail = async (parsedEmailContext: ParsedEmailContext): Promise<{
     sender: string,
@@ -593,7 +636,7 @@ export async function triggerWebhook(
         return
     }
     const mailId = await c.env.DB.prepare(
-        `SELECT id FROM raw_mails where address = ? and message_id = ?`
+        `SELECT id FROM raw_mails where address = ? and message_id = ? and shard_index = 0`
     ).bind(address, message_id).first<string>("id");
 
     const parsedEmail = await commonParseMail(parsedEmailContext);

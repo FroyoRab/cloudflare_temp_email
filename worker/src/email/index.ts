@@ -1,6 +1,6 @@
 import { Context } from "hono";
 
-import { getJsonSetting } from "../utils";
+import { getJsonSetting, saveRawMailShards } from "../utils";
 import { sendMailToTelegram } from "../telegram_api";
 import { auto_reply } from "./auto_reply";
 import { isBlocked } from "./black_list";
@@ -62,14 +62,15 @@ async function email(message: ForwardableEmailMessage, env: Bindings, ctx: Execu
         console.error("remove attachment error", error);
     }
 
-    const message_id = message.headers.get("Message-ID");
+    const message_id = message.headers.get("Message-ID") || `local-${crypto.randomUUID()}`;
     // save email
     try {
-        const { success } = await env.DB.prepare(
-            `INSERT INTO raw_mails (source, address, raw, message_id) VALUES (?, ?, ?, ?)`
-        ).bind(
-            message.from, message.to, parsedEmailContext.rawEmail, message_id
-        ).run();
+        const success = await saveRawMailShards(env.DB, {
+            source: message.from,
+            address: message.to,
+            rawEmail: parsedEmailContext.rawEmail || "",
+            messageId: message_id
+        });
         if (!success) {
             message.setReject(`Failed save message to ${message.to}`);
             console.error(`Failed save message from ${message.from} to ${message.to}`);

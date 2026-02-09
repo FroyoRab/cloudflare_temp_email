@@ -7,7 +7,7 @@ import { CONSTANTS } from "../constants";
 import { getBooleanValue, getDomains, getJsonObjectValue, getStringValue } from '../utils';
 import { TelegramSettings } from "./settings";
 import { bindTelegramAddress, deleteTelegramAddress, jwtListToAddressData, tgUserNewAddress, unbindTelegramAddress, unbindTelegramByAddress } from "./common";
-import { commonParseMail } from "../common";
+import { commonParseMail, getMergedRawMail } from "../common";
 import { UserFromGetMe } from "telegraf/types";
 import i18n from "../i18n";
 import { LocaleMessages } from "../i18n/type";
@@ -299,19 +299,23 @@ export function newTelegramBot(c: Context<HonoCustomType>, token: string): Teleg
         if (!db_address_id) {
             return await ctx.reply(msgs.TgInvalidAddressMsg);
         }
-        const { raw, id: mailId, created_at } = await c.env.DB.prepare(
-            `SELECT * FROM raw_mails where address = ? `
+        const baseMail = await c.env.DB.prepare(
+            `SELECT id, raw, message_id, created_at FROM raw_mails`
+            + ` where address = ? and shard_index = 0`
             + ` order by id desc limit 1 offset ?`
         ).bind(
             queryAddress, mailIndex
-        ).first<{ raw: string, id: string, created_at: string }>() || {};
-        const { mail } = raw ? await parseMail(msgs, { rawEmail: raw }, queryAddress, created_at) : { mail: msgs.TgNoMoreMailsMsg };
+        ).first<{ raw: string, id: string, created_at: string, message_id: string | null }>() || {};
+        const mergedRaw = baseMail
+            ? await getMergedRawMail(c, queryAddress, baseMail.message_id, baseMail.raw)
+            : null;
+        const { mail } = mergedRaw ? await parseMail(msgs, { rawEmail: mergedRaw }, queryAddress, baseMail?.created_at) : { mail: msgs.TgNoMoreMailsMsg };
         const settings = await c.env.KV.get<TelegramSettings>(CONSTANTS.TG_KV_SETTINGS_KEY, "json");
         const miniAppButtons = []
-        if (settings?.miniAppUrl && settings?.miniAppUrl?.length > 0 && mailId) {
+        if (settings?.miniAppUrl && settings?.miniAppUrl?.length > 0 && baseMail?.id) {
             const url = new URL(settings.miniAppUrl);
             url.pathname = "/telegram_mail"
-            url.searchParams.set("mail_id", mailId);
+            url.searchParams.set("mail_id", baseMail.id);
             miniAppButtons.push(Markup.button.webApp(msgs.TgViewMailBtnMsg, url.toString()));
         }
         if (edit) {
@@ -320,7 +324,7 @@ export function newTelegramBot(c: Context<HonoCustomType>, token: string): Teleg
                     ...Markup.inlineKeyboard([
                         Markup.button.callback(msgs.TgPrevBtnMsg, `mail_${queryAddress}_${mailIndex - 1}`, mailIndex <= 0),
                         ...miniAppButtons,
-                        Markup.button.callback(msgs.TgNextBtnMsg, `mail_${queryAddress}_${mailIndex + 1}`, !raw),
+                        Markup.button.callback(msgs.TgNextBtnMsg, `mail_${queryAddress}_${mailIndex + 1}`, !mergedRaw),
                     ])
                 },
             );
@@ -330,7 +334,7 @@ export function newTelegramBot(c: Context<HonoCustomType>, token: string): Teleg
                 ...Markup.inlineKeyboard([
                     Markup.button.callback(msgs.TgPrevBtnMsg, `mail_${queryAddress}_${mailIndex - 1}`, mailIndex <= 0),
                     ...miniAppButtons,
-                    Markup.button.callback(msgs.TgNextBtnMsg, `mail_${queryAddress}_${mailIndex + 1}`, !raw),
+                    Markup.button.callback(msgs.TgNextBtnMsg, `mail_${queryAddress}_${mailIndex + 1}`, !mergedRaw),
                 ])
             },
         );
@@ -417,7 +421,7 @@ export async function sendMailToTelegram(
         return;
     }
     const mailId = await c.env.DB.prepare(
-        `SELECT id FROM raw_mails where address = ? and message_id = ?`
+        `SELECT id FROM raw_mails where address = ? and message_id = ? and shard_index = 0`
     ).bind(address, message_id).first<string>("id");
     const bot = newTelegramBot(c, c.env.TELEGRAM_BOT_TOKEN);
 

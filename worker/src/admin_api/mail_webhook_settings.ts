@@ -1,7 +1,7 @@
 import { Context } from "hono";
 import { CONSTANTS } from "../constants";
 import { WebhookSettings } from "../models";
-import { commonParseMail, sendWebhook } from "../common";
+import { commonParseMail, getMergedRawMail, sendWebhook } from "../common";
 
 async function getWebhookSettings(c: Context<HonoCustomType>): Promise<Response> {
     const settings = await c.env.KV.get<WebhookSettings>(
@@ -21,10 +21,13 @@ async function saveWebhookSettings(c: Context<HonoCustomType>): Promise<Response
 async function testWebhookSettings(c: Context<HonoCustomType>): Promise<Response> {
     const settings = await c.req.json<WebhookSettings>();
     // random raw email
-    const { id: mailId, raw } = await c.env.DB.prepare(
-        `SELECT id, raw FROM raw_mails ORDER BY RANDOM() LIMIT 1`
-    ).first<{ id: string, raw: string }>() || {};
-    const parsedEmailContext: ParsedEmailContext = { rawEmail: raw || "" };
+    const { id: mailId, raw, address, message_id } = await c.env.DB.prepare(
+        `SELECT id, raw, address, message_id FROM raw_mails`
+        + ` WHERE shard_index = 0`
+        + ` ORDER BY RANDOM() LIMIT 1`
+    ).first<{ id: string, raw: string, address: string, message_id: string | null }>() || {};
+    const mergedRaw = address ? await getMergedRawMail(c, address, message_id, raw) : raw;
+    const parsedEmailContext: ParsedEmailContext = { rawEmail: mergedRaw || "" };
     const parsedEmail = await commonParseMail(parsedEmailContext);
     const res = await sendWebhook(settings, {
         id: mailId || "0",
@@ -32,7 +35,7 @@ async function testWebhookSettings(c: Context<HonoCustomType>): Promise<Response
         from: parsedEmail?.sender || "test@test.com",
         to: "admin@test.com",
         subject: parsedEmail?.subject || "test subject",
-        raw: raw || "test raw email",
+        raw: mergedRaw || "test raw email",
         parsedText: parsedEmail?.text || "test parsed text",
         parsedHtml: parsedEmail?.html || "test parsed html"
     });

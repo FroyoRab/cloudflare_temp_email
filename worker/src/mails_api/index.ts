@@ -2,7 +2,7 @@ import { Context, Hono } from 'hono'
 
 import i18n from '../i18n';
 import { getBooleanValue, getJsonSetting, checkCfTurnstile, getStringValue, getSplitStringListValue, isAddressCountLimitReached } from '../utils';
-import { newAddress, handleListQuery, deleteAddressWithData, getAddressPrefix, getAllowDomains, updateAddressUpdatedAt, generateRandomName } from '../common'
+import { newAddress, handleListQuery, deleteAddressWithData, getAddressPrefix, getAllowDomains, updateAddressUpdatedAt, generateRandomName, getMailWithMergedRawById } from '../common'
 import { CONSTANTS } from '../constants'
 import auto_reply from './auto_reply'
 import webhook_settings from './webhook_settings';
@@ -29,8 +29,8 @@ api.get('/api/mails', async (c) => {
     const { limit, offset } = c.req.query();
     if (Number.parseInt(offset) <= 0) updateAddressUpdatedAt(c, address);
     return await handleListQuery(c,
-        `SELECT * FROM raw_mails where address = ?`,
-        `SELECT count(*) as count FROM raw_mails where address = ?`,
+        `SELECT * FROM raw_mails where address = ? and shard_index = 0`,
+        `SELECT count(*) as count FROM raw_mails where address = ? and shard_index = 0`,
         [address], limit, offset
     );
 })
@@ -38,9 +38,7 @@ api.get('/api/mails', async (c) => {
 api.get('/api/mail/:mail_id', async (c) => {
     const { address } = c.get("jwtPayload")
     const { mail_id } = c.req.param();
-    const result = await c.env.DB.prepare(
-        `SELECT * FROM raw_mails where id = ? and address = ?`
-    ).bind(mail_id, address).first();
+    const result = await getMailWithMergedRawById(c, mail_id, address);
     return c.json(result);
 })
 
@@ -51,10 +49,19 @@ api.delete('/api/mails/:id', async (c) => {
     }
     const { address } = c.get("jwtPayload")
     const { id } = c.req.param();
+    const normalizedAddress = address.toLowerCase();
+    const mailRecord = await c.env.DB.prepare(
+        `SELECT message_id FROM raw_mails WHERE id = ? and address = ?`
+    ).bind(id, normalizedAddress).first<{ message_id: string | null }>();
     // TODO: add toLowerCase() to handle old data
     const { success } = await c.env.DB.prepare(
-        `DELETE FROM raw_mails WHERE address = ? and id = ? `
-    ).bind(address.toLowerCase(), id).run();
+        mailRecord?.message_id
+            ? `DELETE FROM raw_mails WHERE address = ? and message_id = ?`
+            : `DELETE FROM raw_mails WHERE address = ? and id = ? `
+    ).bind(
+        normalizedAddress,
+        ...(mailRecord?.message_id ? [mailRecord.message_id] : [id])
+    ).run();
     return c.json({
         success: success
     })
