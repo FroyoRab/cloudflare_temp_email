@@ -28,8 +28,18 @@ api.get('/api/mails', async (c) => {
     }
     const { limit, offset } = c.req.query();
     if (Number.parseInt(offset) <= 0) updateAddressUpdatedAt(c, address);
+    const selectMailsWithMergedRaw =
+        `SELECT rm.*, COALESCE((`
+        + `SELECT GROUP_CONCAT(raw, '') FROM (`
+        + `SELECT s.raw FROM raw_mails s`
+        + ` WHERE s.address = rm.address`
+        + ` AND ((rm.message_id IS NOT NULL AND s.message_id = rm.message_id)`
+        + ` OR (rm.message_id IS NULL AND s.id = rm.id))`
+        + ` ORDER BY s.shard_index ASC, s.id ASC`
+        + `)`
+        + `), rm.raw) AS raw FROM raw_mails rm`;
     return await handleListQuery(c,
-        `SELECT * FROM raw_mails where address = ? and shard_index = 0`,
+        `${selectMailsWithMergedRaw} where rm.address = ? and rm.shard_index = 0`,
         `SELECT count(*) as count FROM raw_mails where address = ? and shard_index = 0`,
         [address], limit, offset
     );
