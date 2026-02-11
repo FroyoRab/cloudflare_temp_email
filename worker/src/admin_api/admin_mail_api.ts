@@ -1,18 +1,29 @@
 import { Context } from "hono";
 import { handleListQuery } from "../common";
 
+const SELECT_MAILS_WITH_MERGED_RAW =
+    `SELECT rm.*, COALESCE((`
+    + `SELECT GROUP_CONCAT(raw, '') FROM (`
+    + `SELECT s.raw FROM raw_mails s`
+    + ` WHERE s.address = rm.address`
+    + ` AND ((rm.message_id IS NOT NULL AND s.message_id = rm.message_id)`
+    + ` OR (rm.message_id IS NULL AND s.id = rm.id))`
+    + ` ORDER BY s.shard_index ASC, s.id ASC`
+    + `)`
+    + `), rm.raw) AS raw FROM raw_mails rm`;
+
 export default {
     getMails: async (c: Context<HonoCustomType>) => {
         const { address, limit, offset } = c.req.query();
-        const addressQuery = address ? `address = ?` : "";
+        const addressQuery = address ? `rm.address = ?` : "";
         const addressParams = address ? [address] : [];
         const filterQuerys = [addressQuery].filter((item) => item).join(" and ");
         const finalQuery = filterQuerys.length > 0 ? `where ${filterQuerys}` : "";
         const filterParams = [...addressParams]
         return await handleListQuery(c,
-            `SELECT * FROM raw_mails ${finalQuery}`
-            + `${finalQuery ? " and" : " where"} shard_index = 0`,
-            `SELECT count(*) as count FROM raw_mails ${finalQuery}`
+            `${SELECT_MAILS_WITH_MERGED_RAW} ${finalQuery}`
+            + `${finalQuery ? " and" : " where"} rm.shard_index = 0`,
+            `SELECT count(*) as count FROM raw_mails ${finalQuery.replaceAll("rm.", "")}`
             + `${finalQuery ? " and" : " where"} shard_index = 0`,
             filterParams, limit, offset
         );
@@ -20,8 +31,9 @@ export default {
     getUnknowMails: async (c: Context<HonoCustomType>) => {
         const { limit, offset } = c.req.query();
         return await handleListQuery(c,
-            `SELECT * FROM raw_mails where address NOT IN (select name from address)`
-            + ` and shard_index = 0`,
+            `${SELECT_MAILS_WITH_MERGED_RAW}`
+            + ` where rm.address NOT IN (select name from address)`
+            + ` and rm.shard_index = 0`,
             `SELECT count(*) as count FROM raw_mails`
             + ` where address NOT IN (select name from address)`
             + ` and shard_index = 0`,
